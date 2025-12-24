@@ -3,7 +3,9 @@ Post generation endpoints.
 """
 import random
 import asyncio
-from fastapi import APIRouter, HTTPException, Query
+import uuid
+from datetime import datetime
+from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
 from config import DEFAULT_PHONE_NUMBER
 from models import GeneratePostResponse
 from database import UserRepository
@@ -17,6 +19,9 @@ from services import (
 )
 
 router = APIRouter(tags=["Posts"])
+
+# In-memory job tracker 
+distribution_jobs = {}
 
 
 @router.post("/generate-post", response_model=GeneratePostResponse)
@@ -75,10 +80,12 @@ async def generate_post(
 
 
 @router.post("/distribute-holiday-post")
-async def distribute_holiday_post():
+async def distribute_holiday_post(background_tasks: BackgroundTasks):
     """
     Generate a holiday post once and send customized versions to all users
     with randomized staggered delays to avoid rate-limiting/bans.
+    
+    Returns immediately with a job_id. Use /distribution-status/{job_id} to check progress.
     """
     # 1. Get Today's Holiday
     holiday = parse_csv_for_today()
@@ -101,10 +108,41 @@ async def distribute_holiday_post():
 
     generated_base_image = generate_image(image_prompt)
 
-    # 4. Iterate and Customize with Staggered Delays
-    results = []
-    total_users = len(users)
+    # 4. Create a job ID and start background task
+    job_id = str(uuid.uuid4())
+    distribution_jobs[job_id] = {
+        "status": "running",
+        "holiday": holiday,
+        "total_users": len(users),
+        "processed": 0,
+        "successful": 0,
+        "failed": 0,
+        "started_at": datetime.now().isoformat(),
+        "results": []
+    }
 
+    # Start background task
+    background_tasks.add_task(
+        _process_distribution,
+        job_id,
+        users,
+        generated_base_image,
+        caption
+    )
+
+    return {
+        "status": "started",
+        "job_id": job_id,
+        "holiday": holiday,
+        "total_users": len(users),
+        "message": f"Distribution started for {len(users)} users. Check status at /distribution-status/{job_id}"
+    }
+
+
+async def _process_distribution(job_id: str, users: list, base_image, caption: str):
+    """Background task to process the distribution with staggered delays."""
+    job = distribution_jobs[job_id]
+    
     for index, user in enumerate(users):
         try:
             # Custom footer: "Phone | Mail | Website"
@@ -112,7 +150,7 @@ async def distribute_holiday_post():
 
             # Overlay specific logo and footer
             custom_image = overlay_images(
-                generated_base_image,
+                base_image,
                 logo_data=user.get("logo"),
                 footer_text=footer
             )
@@ -123,28 +161,42 @@ async def distribute_holiday_post():
             # Wait for a random time before sending (except first user)
             if index > 0:
                 delay_seconds = random.randint(30, 300)
-                print(f"Waiting {delay_seconds} seconds before sending to {user.get('phone')}...")
+                print(f"[Job {job_id}] Waiting {delay_seconds}s before sending to {user.get('phone')}...")
                 await asyncio.sleep(delay_seconds)
 
             api_res = await send_to_whatsapp(image_b64, caption, phone=user.get("phone"))
 
-            results.append({
+            job["results"].append({
                 "user_id": str(user["_id"]),
                 "phone": user.get("phone"),
                 "success": True,
                 "api_response": api_res
             })
+            job["successful"] += 1
+
         except Exception as e:
-            results.append({
+            job["results"].append({
                 "user_id": str(user["_id"]),
                 "phone": user.get("phone"),
                 "success": False,
                 "error": str(e)
             })
+            job["failed"] += 1
+        
+        job["processed"] += 1
+    
+    job["status"] = "completed"
+    job["completed_at"] = datetime.now().isoformat()
+    print(f"[Job {job_id}] Distribution completed: {job['successful']} successful, {job['failed']} failed")
 
-    return {
-        "status": "completed",
-        "holiday": holiday,
-        "total_users": total_users,
-        "results": results
-    }
+
+@router.get("/distribution-status/{job_id}")
+async def get_distribution_status(job_id: str):
+    """
+    Check the status of a distribution job.
+    """
+    if job_id not in distribution_jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    return distribution_jobs[job_id]
+
