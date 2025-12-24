@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, File, UploadFile, Form
+from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from google import genai
 from google.genai import types
@@ -67,6 +68,15 @@ Respond in valid JSON format with exactly these keys:
 
 app = FastAPI(
     title="Postify", description="Automated Holiday Social Media Post Generator"
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 client = genai.Client(api_key=GEMINI_API_KEY)
