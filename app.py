@@ -39,7 +39,7 @@ GEMINI_IMAGE_MODEL = "gemini-3-pro-image-preview"
 IMAGE_SIZE = 1024
 
 # Footer Settings
-FOOTER_TEXT = "Tel: +91 8299396255  |  Email: ANDROCODERS21@GMAIL.COM  |  ANDROCODERS.IN"
+FOOTER_TEXT = "+91 8299396255   |   ANDROCODERS21@GMAIL.COM   |   ANDROCODERS.IN"
 FOOTER_ELEVATION = 40
 FOOTER_FONT_SIZE = 24
 FOOTER_TEXT_COLOR = (255, 255, 255)  # White text
@@ -310,7 +310,7 @@ async def generate_post():
         )
 
 
-@app.post("/add-subscriber")
+@app.post("/addsubscriber")
 async def add_subscriber(
     logo: UploadFile = File(...),
     phone: str = Form(...),
