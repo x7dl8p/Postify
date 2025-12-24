@@ -318,14 +318,29 @@ async def add_subscriber(
         raise HTTPException(status_code=500, detail="MONGO_URI not configured")
 
     try:
-        # Read the file content
+        # Read the file content and resize
         logo_content = await logo.read()
+        try:
+            img = Image.open(io.BytesIO(logo_content))
+            # Handle RGBA or other modes if necessary
+            if img.mode != "RGBA":
+                img = img.convert("RGBA")
+            
+            # Resize to 150x150 with Lanczos filter
+            img = img.resize((150, 150), Image.Resampling.LANCZOS)
+            
+            # Convert back to binary
+            output = io.BytesIO()
+            img.save(output, format="PNG")
+            logo_content = output.getvalue()
+        except Exception as img_err:
+            raise HTTPException(status_code=400, detail=f"Invalid image file: {str(img_err)}")
         
         subscriber_data = {
             "phone": phone,
             "mail": mail,
             "website": website,
-            "logo": logo_content,  # Storing binary data directly
+            "logo": logo_content,  # Storing resized binary data
             "logo_filename": logo.filename,
             "created_at": datetime.now()
         }
