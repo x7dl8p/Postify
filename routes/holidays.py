@@ -3,8 +3,9 @@ Holiday API Routes - CRUD operations for holidays.
 """
 from fastapi import APIRouter, HTTPException, status
 from typing import List
-from models.schemas import HolidayCreate, HolidayUpdate, HolidayResponse
+from models.schemas import HolidayCreate, HolidayUpdate, HolidayResponse, GeneratePromptResponse
 from database import HolidayRepository
+from services import generate_structured_output
 
 router = APIRouter(prefix="/holidays", tags=["Holidays"])
 
@@ -119,6 +120,64 @@ async def update_holiday(holiday_id: str, holiday: HolidayUpdate):
 async def delete_holiday(holiday_id: str):
     """Delete a holiday by ID."""
     return await HolidayRepository.delete(holiday_id)
+
+
+@router.get(
+    "/{holiday_id}/preview-prompt",
+    response_model=GeneratePromptResponse,
+    summary="Preview image generation prompt",
+    description="Generate and preview the AI prompt that will be sent to the image generation model for a specific festival."
+)
+async def preview_image_prompt(holiday_id: str):
+    """
+    Preview the image generation prompt for a festival.
+
+    This endpoint shows you exactly what will be sent to the image generation AI:
+    - The festival name and description
+    - The combined context sent to the text AI
+    - The generated image prompt
+    - The generated caption
+    """
+    # 1. Fetch Holiday
+    holiday_data = await HolidayRepository.get_by_id(holiday_id)
+    if not holiday_data:
+        raise HTTPException(status_code=404, detail="Festival not found")
+
+    festival_name = holiday_data.get("prompt")
+    festival_description = holiday_data.get("description")
+
+    # 2. Build AI input context (same as in generate_structured_output)
+    if festival_description:
+        ai_input_context = f"{festival_name}. Context: {festival_description}"
+    else:
+        ai_input_context = festival_name
+
+    try:
+        # 3. Generate structured output (prompt + caption)
+        print(f"\n[Preview] Generating prompt for: {festival_name}")
+        if festival_description:
+            print(f"[Preview] With description: {festival_description}")
+
+        structured_output = generate_structured_output(festival_name, festival_description)
+        image_prompt = structured_output.get("prompt", "")
+        caption = structured_output.get("caption", "")
+
+        print(f"[Preview] Generated image prompt length: {len(image_prompt)} characters")
+        print(f"[Preview] Generated caption: {caption}")
+
+        return GeneratePromptResponse(
+            festival_name=festival_name,
+            festival_description=festival_description,
+            ai_input_context=ai_input_context,
+            generated_image_prompt=image_prompt,
+            generated_caption=caption
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate prompt: {str(e)}"
+        )
 
 
 @router.delete(

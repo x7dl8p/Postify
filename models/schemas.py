@@ -35,3 +35,18 @@ class HolidayResponse(BaseModel):
     prompt: str
     description: Optional[str] = None
     created_at: Optional[str] = None
+
+
+class SendFestivalRequest(BaseModel):
+    """Request model for sending a specific festival to a subscriber."""
+    subscriber_id: str
+    festival_id: str
+
+
+class GeneratePromptResponse(BaseModel):
+    """Response model for preview image generation prompt."""
+    festival_name: str
+    festival_description: Optional[str] = None
+    ai_input_context: str
+    generated_image_prompt: str
+    generated_caption: str

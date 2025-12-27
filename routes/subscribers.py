@@ -10,7 +10,8 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, File, UploadFile, Form, BackgroundTasks
 from PIL import Image
 from config import MONGO_URI
-from database import SubscriberRepository
+from database import SubscriberRepository, HolidayRepository
+from models.schemas import SendFestivalRequest
 from services import (
     get_holiday_for_today,
     get_holiday_with_description_for_today,
@@ -345,3 +346,71 @@ async def get_subscriber_distribution_status(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
 
     return subscriber_distribution_jobs[job_id]
+
+
+@router.post("/send-festival")
+async def send_festival_to_subscriber(request: SendFestivalRequest):
+    """
+    Send a specific festival post to a specific subscriber.
+    """
+    # 1. Validate Subscriber
+    subscriber = await SubscriberRepository.get_by_id(request.subscriber_id)
+    if not subscriber:
+        raise HTTPException(status_code=404, detail="Subscriber not found")
+
+    # 2. Validate Festival (Holiday)
+    holiday_data = await HolidayRepository.get_by_id(request.festival_id)
+    if not holiday_data:
+        raise HTTPException(status_code=404, detail="Festival not found")
+
+    holiday_name = holiday_data.get("prompt")
+    holiday_description = holiday_data.get("description")
+
+    # 3. Get Raw Subscriber (for overlay)
+    from bson import ObjectId
+    from database import get_subscribers_collection
+    raw_subscriber = await get_subscribers_collection().find_one({"_id": ObjectId(request.subscriber_id)})
+
+    if not raw_subscriber:
+        raise HTTPException(status_code=404, detail="Subscriber raw data not found")
+
+    try:
+        # 4. Generate Content
+        print(f"Generating content for {holiday_name}...")
+        structured_output = generate_structured_output(holiday_name, holiday_description)
+        image_prompt = structured_output.get("prompt", "")
+        caption = structured_output.get("caption", "")
+
+        if not image_prompt:
+            raise HTTPException(status_code=500, detail="Failed to generate image prompt")
+
+        # 5. Generate Image
+        print(f"Generating image with prompt: {image_prompt[:50]}...")
+        base_image = generate_image(image_prompt)
+
+        # 6. Apply Overlay
+        overlay_base64 = raw_subscriber.get("overlay", "")
+        if overlay_base64:
+            overlay_bytes = base64.b64decode(overlay_base64)
+            final_image = overlay_subscriber_image(base_image, overlay_bytes)
+        else:
+            final_image = base_image
+
+        # 7. Send via WhatsApp
+        image_b64 = image_to_base64(final_image)
+        phone = subscriber.get("phone")
+
+        print(f"Sending to {phone}...")
+        api_res = await send_to_whatsapp(image_b64, caption, phone=phone)
+
+        return {
+            "status": "success",
+            "message": "Festival post sent successfully",
+            "subscriber": subscriber.get("name"),
+            "festival": holiday_name,
+            "api_response": api_res
+        }
+
+    except Exception as e:
+        print(f"Error sending festival post: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to send post: {str(e)}")
